@@ -42,8 +42,11 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -378,7 +381,12 @@ fun FaqScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // Apply the focus once per visit: the flag is saveable, so rotating or searching afterwards
+    // does not re-expand the section and jump back to it. Set only once the scroll is done, so a
+    // run cancelled midway is retried. Remember's HelpScreen guards its focus the same way.
+    var focusHandled by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(initialFocusSectionId, filteredSections) {
+        if (focusHandled || filteredSections.isEmpty()) return@LaunchedEffect
         if (initialFocusSectionId == Screen.Faq.FOCUS_STORAGE_ACCESS) {
             if (!expandedItemIds.contains("storage_all_files")) {
                 faqViewModel.setItemExpanded("storage_all_files", true)
@@ -405,6 +413,7 @@ fun FaqScreen(
                 listState.scrollToItem(scrollIndex)
             }
         }
+        focusHandled = true
     }
 
     val scheme = MaterialTheme.colorScheme

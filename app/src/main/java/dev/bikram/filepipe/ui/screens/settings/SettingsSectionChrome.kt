@@ -50,13 +50,25 @@ internal fun SettingsExpandableSection(
     modifier: Modifier = Modifier,
     showHeader: Boolean = true,
     forceExpanded: Boolean = false,
+    highlightedSectionKey: String? = null,
     content: @Composable () -> Unit,
 ) {
     val collapsed = !forceExpanded && sectionKey in collapsedSectionKeys
+    // Pulses while a Help deep link points at this section; see SettingsScreen.
+    val highlighted = sectionKey == highlightedSectionKey
+    val highlightAlpha = rememberSectionHighlightPulseAlpha(highlighted)
     val spatialSpec = reducedMotionAwareSpec(MaterialTheme.motionScheme.slowSpatialSpec<IntSize>())
     val fadeInSpec = reducedMotionAwareSpec(MaterialTheme.motionScheme.defaultEffectsSpec<Float>())
     val fadeOutSpec = reducedMotionAwareSpec(MaterialTheme.motionScheme.fastEffectsSpec<Float>())
-    Column(modifier = modifier) {
+    Column(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .pulsingSectionHighlightOutline(
+                    active = highlighted,
+                    outlineColor = MaterialTheme.colorScheme.primary.copy(alpha = highlightAlpha),
+                ),
+    ) {
         if (showHeader) {
             FilePipeExpandableSectionHeader(
                 iconName = iconName,

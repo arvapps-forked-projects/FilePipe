@@ -426,10 +426,10 @@ fun SettingsScreen(
         settingsExpandableSectionKeys.all { sectionKey ->
             sectionKey in currentCollapsedSectionKeys
         }
-    var folderAccessHighlight by rememberSaveable { mutableStateOf(false) }
-    var folderAccessHighlightExpiresAtMillis by rememberSaveable { mutableLongStateOf(0L) }
-    var notificationsHighlight by rememberSaveable { mutableStateOf(false) }
-    var notificationsHighlightExpiresAtMillis by rememberSaveable { mutableLongStateOf(0L) }
+    // The section a Help deep link last pointed at, and when its pulse ends. One at a time: a newer
+    // link moves it. SettingsExpandableSection draws the outline, so every section can be a target.
+    var sectionHighlightKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var sectionHighlightExpiresAtMillis by rememberSaveable { mutableLongStateOf(0L) }
     val highlightSection = highlightSectionKey?.substringBefore(".")
     LaunchedEffect(highlightSectionKey) {
         val key = highlightSection ?: return@LaunchedEffect
@@ -448,37 +448,19 @@ fun SettingsScreen(
         if (settingsLazyListState.layoutInfo.totalItemsCount > targetIndex) {
             settingsLazyListState.animateScrollToItem(targetIndex)
         }
-        val highlightExpiresAtMillis = SystemClock.elapsedRealtime() + SETTINGS_SECTION_HIGHLIGHT_DURATION_MS
-        when (settingsSectionKey) {
-            SettingsSectionKey.FolderAccess.routeKey -> {
-                folderAccessHighlight = true
-                folderAccessHighlightExpiresAtMillis = highlightExpiresAtMillis
-            }
-
-            SettingsSectionKey.Schedule.routeKey -> {
-                notificationsHighlight = true
-                notificationsHighlightExpiresAtMillis = highlightExpiresAtMillis
-            }
-        }
+        sectionHighlightKey = settingsSectionKey
+        sectionHighlightExpiresAtMillis = SystemClock.elapsedRealtime() + SETTINGS_SECTION_HIGHLIGHT_DURATION_MS
         onHighlightHandled()
     }
-    LaunchedEffect(folderAccessHighlight, folderAccessHighlightExpiresAtMillis) {
-        if (!folderAccessHighlight) return@LaunchedEffect
-        val remainingHighlightMillis = folderAccessHighlightExpiresAtMillis - SystemClock.elapsedRealtime()
+    LaunchedEffect(sectionHighlightKey, sectionHighlightExpiresAtMillis) {
+        if (sectionHighlightKey == null) return@LaunchedEffect
+        val remainingHighlightMillis = sectionHighlightExpiresAtMillis - SystemClock.elapsedRealtime()
         if (remainingHighlightMillis > 0) delay(remainingHighlightMillis)
-        folderAccessHighlight = false
-        folderAccessHighlightExpiresAtMillis = 0L
+        sectionHighlightKey = null
+        sectionHighlightExpiresAtMillis = 0L
     }
-    LaunchedEffect(notificationsHighlight, notificationsHighlightExpiresAtMillis) {
-        if (!notificationsHighlight) return@LaunchedEffect
-        val remainingHighlightMillis = notificationsHighlightExpiresAtMillis - SystemClock.elapsedRealtime()
-        if (remainingHighlightMillis > 0) delay(remainingHighlightMillis)
-        notificationsHighlight = false
-        notificationsHighlightExpiresAtMillis = 0L
-    }
-    val highlightNowMillis = SystemClock.elapsedRealtime()
-    val folderAccessHighlightActive = folderAccessHighlight && folderAccessHighlightExpiresAtMillis > highlightNowMillis
-    val notificationsHighlightActive = notificationsHighlight && notificationsHighlightExpiresAtMillis > highlightNowMillis
+    val activeSectionHighlightKey =
+        sectionHighlightKey.takeIf { sectionHighlightExpiresAtMillis > SystemClock.elapsedRealtime() }
     val notificationPermissionLauncher =
         rememberLauncherForActivityResult(
             ActivityResultContracts.RequestPermission(),
@@ -891,6 +873,7 @@ fun SettingsScreen(
                         onCollapsedSectionKeysChange = ::updateCollapsedSettingsSectionKeys,
                         showHeader = showSectionHeaders,
                         forceExpanded = forceExpandedSections,
+                        highlightedSectionKey = activeSectionHighlightKey,
                     ) {
                         AppearanceSection(
                             themeMode = preferences.themeMode,
@@ -935,151 +918,138 @@ fun SettingsScreen(
             // Folder access
             if (shouldRenderSection(SettingsSectionKey.FolderAccess)) {
                 item {
-                    val folderHighlightPulse = rememberSectionHighlightPulseAlpha(folderAccessHighlightActive)
-                    Column(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .pulsingSectionHighlightOutline(
-                                    active = folderAccessHighlightActive,
-                                    outlineColor =
-                                        MaterialTheme.colorScheme.primary.copy(
-                                            alpha = folderHighlightPulse,
-                                        ),
-                                ),
+                    SettingsExpandableSection(
+                        sectionKey = SettingsSectionKey.FolderAccess.routeKey,
+                        iconName = SettingsSectionKey.FolderAccess.iconName,
+                        title = stringResource(R.string.settings_folder_access_section),
+                        collapsedSectionKeys = currentCollapsedSectionKeys,
+                        onCollapsedSectionKeysChange = ::updateCollapsedSettingsSectionKeys,
+                        showHeader = showSectionHeaders,
+                        forceExpanded = forceExpandedSections,
+                        highlightedSectionKey = activeSectionHighlightKey,
                     ) {
-                        SettingsExpandableSection(
-                            sectionKey = SettingsSectionKey.FolderAccess.routeKey,
-                            iconName = SettingsSectionKey.FolderAccess.iconName,
-                            title = stringResource(R.string.settings_folder_access_section),
-                            collapsedSectionKeys = currentCollapsedSectionKeys,
-                            onCollapsedSectionKeysChange = ::updateCollapsedSettingsSectionKeys,
-                            showHeader = showSectionHeaders,
-                            forceExpanded = forceExpandedSections,
-                        ) {
-                            GroupedListColumn {
-                                GroupedListItem(position = GroupPosition.FIRST) {
-                                    ListItem(
-                                        trailingContent = {
-                                            RadioButton(
-                                                selected = preferences.folderAccessMode == FolderAccessMode.SAF_ONLY,
-                                                onClick = null,
-                                            )
-                                        },
-                                        modifier =
-                                            Modifier.appClickable {
-                                                applyFolderAccessMode(FolderAccessMode.SAF_ONLY)
-                                            },
-                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                                    ) {
-                                        Text(
-                                            stringResource(R.string.settings_folder_access_saf_only),
-                                            style = MaterialTheme.typography.bodyLarge,
+                        GroupedListColumn {
+                            GroupedListItem(position = GroupPosition.FIRST) {
+                                ListItem(
+                                    trailingContent = {
+                                        RadioButton(
+                                            selected = preferences.folderAccessMode == FolderAccessMode.SAF_ONLY,
+                                            onClick = null,
                                         )
-                                    }
-                                }
-                                GroupedListItem(position = GroupPosition.LAST) {
-                                    ListItem(
-                                        trailingContent = {
-                                            RadioButton(
-                                                selected = preferences.folderAccessMode == FolderAccessMode.ALL_FILES_PREFERRED,
-                                                onClick = null,
-                                            )
-                                        },
-                                        modifier =
-                                            Modifier.appClickable {
-                                                applyFolderAccessMode(FolderAccessMode.ALL_FILES_PREFERRED)
-                                            },
-                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                                    ) {
-                                        Text(
-                                            stringResource(R.string.settings_folder_access_all_files),
-                                            style = MaterialTheme.typography.bodyLarge,
-                                        )
-                                    }
-                                }
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            val selectiveLike =
-                                preferences.folderAccessMode == FolderAccessMode.SAF_ONLY ||
-                                    preferences.folderAccessMode == FolderAccessMode.DEFERRED
-                            val allFilesModeSelected =
-                                preferences.folderAccessMode == FolderAccessMode.ALL_FILES_PREFERRED
-                            val allFilesStatusLine =
-                                when {
-                                    selectiveLike && allFilesAccessGranted -> {
-                                        stringResource(R.string.settings_folder_access_all_files_status_granted_unused)
-                                    }
-
-                                    selectiveLike && !allFilesAccessGranted -> {
-                                        stringResource(R.string.settings_folder_access_all_files_status_not_granted_idle)
-                                    }
-
-                                    allFilesModeSelected && allFilesAccessGranted -> {
-                                        stringResource(R.string.settings_folder_access_all_files_status_granted_used)
-                                    }
-
-                                    else -> {
-                                        stringResource(R.string.settings_folder_access_all_files_status_not_granted_required)
-                                    }
-                                }
-                            Row(
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                val statusStyle = MaterialTheme.typography.bodySmall
-                                val statusColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                Text(
-                                    text = allFilesStatusLine,
-                                    style = statusStyle,
-                                    color = statusColor,
-                                    modifier = Modifier.weight(1f),
-                                    maxLines = 3,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    text = stringResource(R.string.onboarding_permissions_learn_more),
-                                    style = statusStyle,
-                                    color = statusColor,
-                                    modifier =
-                                        Modifier
-                                            .padding(start = 8.dp)
-                                            .appClickable(onClick = onOpenFaqStorageSection),
-                                )
-                            }
-                            val showAllFilesActionButton =
-                                when {
-                                    selectiveLike && !allFilesAccessGranted -> false
-                                    selectiveLike && allFilesAccessGranted -> true
-                                    allFilesModeSelected && !allFilesAccessGranted -> true
-                                    allFilesModeSelected && allFilesAccessGranted -> false
-                                    else -> false
-                                }
-                            if (showAllFilesActionButton) {
-                                Spacer(Modifier.height(8.dp))
-                                FilePipeOutlinedButton(
-                                    onClick = {
-                                        val manageIntent =
-                                            Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                                                data = "package:${context.packageName}".toUri()
-                                            }
-                                        context.startActivity(manageIntent)
                                     },
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier =
+                                        Modifier.appClickable {
+                                            applyFolderAccessMode(FolderAccessMode.SAF_ONLY)
+                                        },
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                                 ) {
                                     Text(
-                                        stringResource(
-                                            if (selectiveLike) {
-                                                R.string.settings_folder_access_open_manage
-                                            } else {
-                                                R.string.settings_folder_access_grant_all_files
-                                            },
-                                        ),
+                                        stringResource(R.string.settings_folder_access_saf_only),
+                                        style = MaterialTheme.typography.bodyLarge,
                                     )
                                 }
+                            }
+                            GroupedListItem(position = GroupPosition.LAST) {
+                                ListItem(
+                                    trailingContent = {
+                                        RadioButton(
+                                            selected = preferences.folderAccessMode == FolderAccessMode.ALL_FILES_PREFERRED,
+                                            onClick = null,
+                                        )
+                                    },
+                                    modifier =
+                                        Modifier.appClickable {
+                                            applyFolderAccessMode(FolderAccessMode.ALL_FILES_PREFERRED)
+                                        },
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                ) {
+                                    Text(
+                                        stringResource(R.string.settings_folder_access_all_files),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        val selectiveLike =
+                            preferences.folderAccessMode == FolderAccessMode.SAF_ONLY ||
+                                preferences.folderAccessMode == FolderAccessMode.DEFERRED
+                        val allFilesModeSelected =
+                            preferences.folderAccessMode == FolderAccessMode.ALL_FILES_PREFERRED
+                        val allFilesStatusLine =
+                            when {
+                                selectiveLike && allFilesAccessGranted -> {
+                                    stringResource(R.string.settings_folder_access_all_files_status_granted_unused)
+                                }
+
+                                selectiveLike && !allFilesAccessGranted -> {
+                                    stringResource(R.string.settings_folder_access_all_files_status_not_granted_idle)
+                                }
+
+                                allFilesModeSelected && allFilesAccessGranted -> {
+                                    stringResource(R.string.settings_folder_access_all_files_status_granted_used)
+                                }
+
+                                else -> {
+                                    stringResource(R.string.settings_folder_access_all_files_status_not_granted_required)
+                                }
+                            }
+                        Row(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            val statusStyle = MaterialTheme.typography.bodySmall
+                            val statusColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            Text(
+                                text = allFilesStatusLine,
+                                style = statusStyle,
+                                color = statusColor,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = stringResource(R.string.onboarding_permissions_learn_more),
+                                style = statusStyle,
+                                color = statusColor,
+                                modifier =
+                                    Modifier
+                                        .padding(start = 8.dp)
+                                        .appClickable(onClick = onOpenFaqStorageSection),
+                            )
+                        }
+                        val showAllFilesActionButton =
+                            when {
+                                selectiveLike && !allFilesAccessGranted -> false
+                                selectiveLike && allFilesAccessGranted -> true
+                                allFilesModeSelected && !allFilesAccessGranted -> true
+                                allFilesModeSelected && allFilesAccessGranted -> false
+                                else -> false
+                            }
+                        if (showAllFilesActionButton) {
+                            Spacer(Modifier.height(8.dp))
+                            FilePipeOutlinedButton(
+                                onClick = {
+                                    val manageIntent =
+                                        Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                                            data = "package:${context.packageName}".toUri()
+                                        }
+                                    context.startActivity(manageIntent)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    stringResource(
+                                        if (selectiveLike) {
+                                            R.string.settings_folder_access_open_manage
+                                        } else {
+                                            R.string.settings_folder_access_grant_all_files
+                                        },
+                                    ),
+                                )
                             }
                         }
                     }
@@ -1089,108 +1059,94 @@ fun SettingsScreen(
             // Schedule
             if (shouldRenderSection(SettingsSectionKey.Schedule)) {
                 item {
-                    val notificationsHighlightPulse =
-                        rememberSectionHighlightPulseAlpha(notificationsHighlightActive)
-                    Column(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .pulsingSectionHighlightOutline(
-                                    active = notificationsHighlightActive,
-                                    outlineColor =
-                                        MaterialTheme.colorScheme.primary.copy(
-                                            alpha = notificationsHighlightPulse,
-                                        ),
-                                ),
+                    SettingsExpandableSection(
+                        sectionKey = SettingsSectionKey.Schedule.routeKey,
+                        iconName = SettingsSectionKey.Schedule.iconName,
+                        title = stringResource(R.string.settings_schedule_section),
+                        collapsedSectionKeys = currentCollapsedSectionKeys,
+                        onCollapsedSectionKeysChange = ::updateCollapsedSettingsSectionKeys,
+                        showHeader = showSectionHeaders,
+                        forceExpanded = forceExpandedSections,
+                        highlightedSectionKey = activeSectionHighlightKey,
                     ) {
-                        SettingsExpandableSection(
-                            sectionKey = SettingsSectionKey.Schedule.routeKey,
-                            iconName = SettingsSectionKey.Schedule.iconName,
-                            title = stringResource(R.string.settings_schedule_section),
-                            collapsedSectionKeys = currentCollapsedSectionKeys,
-                            onCollapsedSectionKeysChange = ::updateCollapsedSettingsSectionKeys,
-                            showHeader = showSectionHeaders,
-                            forceExpanded = forceExpandedSections,
-                        ) {
-                            GroupedListColumn {
-                                GroupedListItem(position = GroupPosition.FIRST) {
-                                    SettingsToggleRow(
-                                        iconName = "notifications",
-                                        title = stringResource(R.string.settings_notifications),
-                                        subtitle = stringResource(R.string.settings_notifications_desc),
-                                        checked = notificationsGranted,
-                                        onCheckedChange = { wantEnabled ->
-                                            when {
-                                                wantEnabled &&
-                                                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
-                                                    pendingEnableUpdateNotificationsAfterPermission = false
-                                                    requestPostNotificationPermissionOrOpenAppSettings()
-                                                }
-
-                                                wantEnabled &&
-                                                    !NotificationManagerCompat
-                                                        .from(context)
-                                                        .areNotificationsEnabled() -> {
-                                                    viewModel.openAppNotificationSettings()
-                                                }
-
-                                                !wantEnabled -> {
-                                                    viewModel.openAppNotificationSettings()
-                                                }
+                        GroupedListColumn {
+                            GroupedListItem(position = GroupPosition.FIRST) {
+                                SettingsToggleRow(
+                                    iconName = "notifications",
+                                    title = stringResource(R.string.settings_notifications),
+                                    subtitle = stringResource(R.string.settings_notifications_desc),
+                                    checked = notificationsGranted,
+                                    onCheckedChange = { wantEnabled ->
+                                        when {
+                                            wantEnabled &&
+                                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
+                                                pendingEnableUpdateNotificationsAfterPermission = false
+                                                requestPostNotificationPermissionOrOpenAppSettings()
                                             }
-                                        },
-                                    )
-                                }
-                                GroupedListItem(position = GroupPosition.MIDDLE) {
-                                    SettingsToggleRow(
-                                        iconName = "alarm_on",
-                                        title = stringResource(R.string.settings_reliable_schedules),
-                                        subtitle =
-                                            stringResource(
-                                                if (canScheduleExactAlarms) {
-                                                    R.string.settings_reliable_schedules_desc_enabled
-                                                } else {
-                                                    R.string.settings_reliable_schedules_desc_disabled
-                                                },
-                                            ),
-                                        checked = canScheduleExactAlarms,
-                                        onCheckedChange = { openExactAlarmSettings() },
-                                    )
-                                }
-                                GroupedListItem(position = GroupPosition.LAST) {
-                                    Row(
-                                        modifier =
-                                            Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 16.dp, vertical = 10.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        FilePipeMaterialRoundedSymbol(
-                                            name = "history",
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                        Spacer(Modifier.width(16.dp))
-                                        Column(
-                                            modifier = Modifier.weight(1f),
-                                            verticalArrangement = Arrangement.spacedBy(2.dp),
-                                        ) {
-                                            Text(
-                                                stringResource(R.string.settings_log_retention),
-                                                style = MaterialTheme.typography.bodyLarge,
-                                            )
-                                            Text(
-                                                stringResource(R.string.settings_log_retention_hint),
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
+
+                                            wantEnabled &&
+                                                !NotificationManagerCompat
+                                                    .from(context)
+                                                    .areNotificationsEnabled() -> {
+                                                viewModel.openAppNotificationSettings()
+                                            }
+
+                                            !wantEnabled -> {
+                                                viewModel.openAppNotificationSettings()
+                                            }
                                         }
-                                        Spacer(Modifier.width(16.dp))
-                                        LogRetentionDropdown(
-                                            currentDays = preferences.logRetentionDays,
-                                            onSelect = { viewModel.setLogRetentionDays(it) },
+                                    },
+                                )
+                            }
+                            GroupedListItem(position = GroupPosition.MIDDLE) {
+                                SettingsToggleRow(
+                                    iconName = "alarm_on",
+                                    title = stringResource(R.string.settings_reliable_schedules),
+                                    subtitle =
+                                        stringResource(
+                                            if (canScheduleExactAlarms) {
+                                                R.string.settings_reliable_schedules_desc_enabled
+                                            } else {
+                                                R.string.settings_reliable_schedules_desc_disabled
+                                            },
+                                        ),
+                                    checked = canScheduleExactAlarms,
+                                    onCheckedChange = { openExactAlarmSettings() },
+                                )
+                            }
+                            GroupedListItem(position = GroupPosition.LAST) {
+                                Row(
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    FilePipeMaterialRoundedSymbol(
+                                        name = "history",
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Spacer(Modifier.width(16.dp))
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                                    ) {
+                                        Text(
+                                            stringResource(R.string.settings_log_retention),
+                                            style = MaterialTheme.typography.bodyLarge,
+                                        )
+                                        Text(
+                                            stringResource(R.string.settings_log_retention_hint),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
+                                    Spacer(Modifier.width(16.dp))
+                                    LogRetentionDropdown(
+                                        currentDays = preferences.logRetentionDays,
+                                        onSelect = { viewModel.setLogRetentionDays(it) },
+                                    )
                                 }
                             }
                         }
@@ -1209,6 +1165,7 @@ fun SettingsScreen(
                         onCollapsedSectionKeysChange = ::updateCollapsedSettingsSectionKeys,
                         showHeader = showSectionHeaders,
                         forceExpanded = forceExpandedSections,
+                        highlightedSectionKey = activeSectionHighlightKey,
                     ) {
                         GroupedListColumn {
                             GroupedListItem(position = GroupPosition.ONLY) {
@@ -1236,6 +1193,7 @@ fun SettingsScreen(
                         onCollapsedSectionKeysChange = ::updateCollapsedSettingsSectionKeys,
                         showHeader = showSectionHeaders,
                         forceExpanded = forceExpandedSections,
+                        highlightedSectionKey = activeSectionHighlightKey,
                     ) {
                         GroupedListColumn {
                             GroupedListItem(position = GroupPosition.ONLY) {
@@ -1264,6 +1222,7 @@ fun SettingsScreen(
                         onCollapsedSectionKeysChange = ::updateCollapsedSettingsSectionKeys,
                         showHeader = showSectionHeaders,
                         forceExpanded = forceExpandedSections,
+                        highlightedSectionKey = activeSectionHighlightKey,
                     ) {
                         BackupSection(
                             preferences = preferences,
@@ -1307,6 +1266,7 @@ fun SettingsScreen(
                             onCollapsedSectionKeysChange = ::updateCollapsedSettingsSectionKeys,
                             showHeader = showSectionHeaders,
                             forceExpanded = forceExpandedSections,
+                            highlightedSectionKey = activeSectionHighlightKey,
                         ) {
                             GroupedListColumn {
                                 if (BuildConfig.CHECK_UPDATES) {
